@@ -15,8 +15,6 @@ data/creditcard.csv
 # Model (will be tracked using DVC)
 models/model.joblib
 
-# Reports
-reports/metrics.json
 
 # IDE
 .vscode/
