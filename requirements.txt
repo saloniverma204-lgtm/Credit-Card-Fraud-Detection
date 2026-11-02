@@ -1,0 +1,12 @@
+pandas
+numpy
+scikit-learn
+joblib
+fastapi
+uvicorn[standard]
+pydantic
+prometheus-client
+pytest
+httpx
+PyYAML
+dvc
