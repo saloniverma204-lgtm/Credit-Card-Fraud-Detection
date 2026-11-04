@@ -1,15 +1,15 @@
 
 import joblib
 import pandas as pd
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 
-# =====================================
+
 # 1. CREATE FASTAPI APPLICATION
-# =====================================
 
 app = FastAPI(
     title="Credit Card Fraud Detection API",
@@ -17,13 +17,29 @@ app = FastAPI(
     version="1.0"
 )
 
-# =====================================
-# 2. LOAD TRAINED MODEL
-# =====================================
 
-model = joblib.load("models/model.joblib")
+# 2. LOAD TRAINED MODEL SAFELY
 
-# Expected input columns
+MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.joblib"
+
+model = None
+
+
+@app.on_event("startup")
+def load_trained_model():
+    global model
+
+    try:
+        model = joblib.load(MODEL_PATH)
+        print("ML model loaded successfully")
+
+    except FileNotFoundError:
+        model = None
+        print("Model file not found. API started without model.")
+
+
+# 3. EXPECTED INPUT FEATURES
+
 FEATURE_COLUMNS = [
     "Time",
     "V1", "V2", "V3", "V4", "V5",
@@ -35,9 +51,8 @@ FEATURE_COLUMNS = [
     "Amount"
 ]
 
-# =====================================
-# 3. PROMETHEUS METRICS
-# =====================================
+
+# 4. PROMETHEUS METRICS
 
 prediction_requests = Counter(
     "prediction_requests_total",
@@ -45,9 +60,8 @@ prediction_requests = Counter(
     ["result"]
 )
 
-# =====================================
-# 4. INPUT DATA VALIDATION
-# =====================================
+
+# 5. INPUT VALIDATION
 
 class Transaction(BaseModel):
     features: dict[str, float] = Field(
@@ -55,9 +69,8 @@ class Transaction(BaseModel):
         description="Transaction features including Time, V1-V28 and Amount"
     )
 
-# =====================================
-# 5. HOME ROUTE
-# =====================================
+
+# 6. HOME ROUTE
 
 @app.get("/")
 def home():
@@ -66,27 +79,30 @@ def home():
         "status": "success"
     }
 
-# =====================================
-# 6. HEALTH CHECK
-# =====================================
+
+# 7. HEALTH CHECK
 
 @app.get("/health")
 def health():
     return {
         "status": "healthy",
-        "model_loaded": True
+        "model_loaded": model is not None
     }
 
-# =====================================
-# 7. FRAUD PREDICTION
-# =====================================
+
+# 8. FRAUD PREDICTION
 
 @app.post("/predict")
 def predict(transaction: Transaction):
 
+    if model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="ML model is not available"
+        )
+
     features = transaction.features
 
-    # Check whether all required features are present
     missing = set(FEATURE_COLUMNS) - set(features.keys())
     extra = set(features.keys()) - set(FEATURE_COLUMNS)
 
@@ -99,25 +115,21 @@ def predict(transaction: Transaction):
             }
         )
 
-    # Arrange input features in correct order
     input_data = pd.DataFrame(
         [[features[column] for column in FEATURE_COLUMNS]],
         columns=FEATURE_COLUMNS
     )
 
-    # Make prediction
     prediction = int(model.predict(input_data)[0])
 
-    # Calculate fraud probability
     probability = float(
         model.predict_proba(input_data)[0][1]
     )
 
-    # Update Prometheus counter
     result = "fraud" if prediction == 1 else "genuine"
+
     prediction_requests.labels(result=result).inc()
 
-    # Return result
     return {
         "prediction": prediction,
         "result": result,
@@ -129,9 +141,8 @@ def predict(transaction: Transaction):
         )
     }
 
-# =====================================
-# 8. PROMETHEUS METRICS ENDPOINT
-# =====================================
+
+# 9. PROMETHEUS METRICS ENDPOINT
 
 @app.get("/metrics")
 def metrics():
@@ -139,3 +150,4 @@ def metrics():
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST
     )
+
